@@ -15,10 +15,10 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build JAR
+      - name: Build with Maven
         run: mvn clean package
 
-      - name: Upload Finished Plugin
+      - name: Upload Plugin JAR
         uses: actions/upload-artifact@v4
         with:
           name: SetHome-Plugin
