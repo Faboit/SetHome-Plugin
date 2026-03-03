@@ -12,6 +12,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -33,38 +34,41 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
         // Create mainconfig.yml with comments if it doesn't exist
         configFile = new File(getDataFolder(), "mainconfig.yml");
         if (!configFile.exists()) {
-            try {
+            try (FileWriter writer = new FileWriter(configFile)) {
                 String sample = 
-"# SetHome main configuration file\n"
-+ "# cooldown_seconds: number of seconds between /home uses per-player (default 3)\n"
-+ "# homes_folder: subfolder inside the plugin folder where player home files are stored\n"
-+ "# note: do not use absolute paths here - keep defaults unless you know what you are doing\n"
-+ "cooldown_seconds: 3\n"
-+ "homes_folder: homes\n"
-+ "\n"
-+ "# Message templates use Minecraft color codes, e.g. &b and &3 (user requested).\n"
-+ "# {home} will be replaced with the home name, {x},{y},{z},{world} with coordinates.\n"
-+ "messages:\n"
-+ "  set: "&bHome &3{home} &bset at &3{world} &b({x}, {y}, {z})"\n"
-+ "  teleport: "&bTeleported to home &3{home}&b (world: &3{world}&b)"\n"
-+ "  not_found: "&bNo home &3{home} &bfound."\n"
-+ "  cooldown: "&bYou must wait &3{time}s &bbefore using that again."\n";
-                configFile.write_text(sample)
-            ;
-            } catch (Exception e) {
+                    "# SetHome main configuration file\n"
+                    + "# cooldown_seconds: number of seconds between /home uses per-player (default 3)\n"
+                    + "# homes_folder: subfolder inside the plugin folder where player home files are stored\n"
+                    + "# note: do not use absolute paths here - keep defaults unless you know what you are doing\n"
+                    + "cooldown_seconds: 3\n"
+                    + "homes_folder: homes\n"
+                    + "\n"
+                    + "# Message templates use Minecraft color codes, e.g. &b and &3.\n"
+                    + "# {home} will be replaced with the home name, {x},{y},{z},{world} with coordinates.\n"
+                    + "messages:\n"
+                    + "  set: \"&bHome &3{home} &bset at &3{world} &b({x}, {y}, {z})\"\n"
+                    + "  teleport: \"&bTeleported to home &3{home}&b (world: &3{world}&b)\"\n"
+                    + "  not_found: \"&bNo home &3{home} &bfound.\"\n"
+                    + "  cooldown: \"&bYou must wait &3{time}s &bbefore using that again.\"\n";
+                writer.write(sample);
+            } catch (IOException e) {
                 getLogger().severe("Failed to create mainconfig.yml: " + e.getMessage());
             }
         }
 
-        // load config to set cooldown value
+        // Load config to set cooldown value
         YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
         cooldownSeconds = cfg.getInt("cooldown_seconds", 3);
 
         // Register commands
-        this.getCommand("sethome").setExecutor(this);
-        this.getCommand("sethome").setTabCompleter(this);
-        this.getCommand("home").setExecutor(this);
-        this.getCommand("home").setTabCompleter(this);
+        if (getCommand("sethome") != null) {
+            getCommand("sethome").setExecutor(this);
+            getCommand("sethome").setTabCompleter(this);
+        }
+        if (getCommand("home") != null) {
+            getCommand("home").setExecutor(this);
+            getCommand("home").setTabCompleter(this);
+        }
 
         getLogger().info("SetHomePlugin enabled. Homes folder: " + homesDir.getAbsolutePath());
     }
@@ -115,17 +119,17 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage(color("&bOnly players can use this command." ));
+            sender.sendMessage(color("&bOnly players can use this command."));
             return true;
         }
         Player p = (Player) sender;
+        YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
+
         if (command.getName().equalsIgnoreCase("sethome")) {
             String name = args.length > 0 ? args[0].toLowerCase() : "main";
             Location loc = p.getLocation();
             try {
                 saveHome(p.getUniqueId(), name, loc);
-                // Use message template from config if available
-                YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
                 String msg = cfg.getString("messages.set", "&bHome &3{home} &bset.");
                 msg = msg.replace("{home}", name)
                          .replace("{x}", String.format("%.2f", loc.getX()))
@@ -139,7 +143,8 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
             return true;
         } else if (command.getName().equalsIgnoreCase("home")) {
             String name = args.length > 0 ? args[0].toLowerCase() : "main";
-            // cooldown check
+            
+            // Cooldown check
             long now = System.currentTimeMillis();
             UUID id = p.getUniqueId();
             if (cooldowns.containsKey(id)) {
@@ -148,7 +153,6 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
                 long must = cooldownSeconds * 1000L;
                 if (diff < must) {
                     long remain = (must - diff + 999) / 1000;
-                    YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
                     String tmpl = cfg.getString("messages.cooldown", "&bYou must wait &3{time}s &bbefore using that again.");
                     p.sendMessage(color(tmpl.replace("{time}", Long.toString(remain))));
                     return true;
@@ -157,7 +161,6 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
 
             Location dest = loadHome(p.getUniqueId(), name);
             if (dest == null) {
-                YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
                 String tmpl = cfg.getString("messages.not_found", "&bNo home &3{home} &bfound.");
                 p.sendMessage(color(tmpl.replace("{home}", name)));
                 return true;
@@ -166,7 +169,6 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
             p.teleport(dest);
             cooldowns.put(p.getUniqueId(), now);
 
-            YamlConfiguration cfg = YamlConfiguration.loadConfiguration(configFile);
             String tmpl = cfg.getString("messages.teleport", "&bTeleported to home &3{home}&b.");
             tmpl = tmpl.replace("{home}", name).replace("{world}", dest.getWorld().getName());
             p.sendMessage(color(tmpl));
@@ -175,18 +177,27 @@ public class SetHomePlugin extends JavaPlugin implements TabExecutor {
         return false;
     }
 
-    // Tab completion suggests "main" and other saved home names
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!(sender instanceof Player)) return Collections.emptyList();
         Player p = (Player) sender;
         if (args.length == 1) {
             File f = playerFile(p.getUniqueId());
-            if (!f.exists()) return Arrays.asList("main").stream().filter(s -> s.startsWith(args[0].toLowerCase())).collect(Collectors.toList());
+            if (!f.exists()) {
+                return Collections.singletonList("main").stream()
+                        .filter(s -> s.startsWith(args[0].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
             YamlConfiguration cfg = YamlConfiguration.loadConfiguration(f);
-            if (!cfg.contains("Homes")) return Arrays.asList("main").stream().filter(s -> s.startsWith(args[0].toLowerCase())).collect(Collectors.toList());
+            if (!cfg.contains("Homes")) {
+                return Collections.singletonList("main").stream()
+                        .filter(s -> s.startsWith(args[0].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
             Set<String> keys = cfg.getConfigurationSection("Homes").getKeys(false);
-            return keys.stream().filter(k -> k.startsWith(args[0].toLowerCase())).collect(Collectors.toList());
+            return keys.stream()
+                    .filter(k -> k.startsWith(args[0].toLowerCase()))
+                    .collect(Collectors.toList());
         }
         return Collections.emptyList();
     }
